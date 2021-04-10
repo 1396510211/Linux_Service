@@ -6,14 +6,40 @@
 #include <list>
 #include <sstream>
 #include <fstream>
+#include <map>
+#include <stdarg.h>
+
+
+
+
 
 namespace haifeng {
+class Logger;
+class LoggerManager;
+
 //日志事件
 class LogEvent
 {
 public:
 	typedef std::shared_ptr<LogEvent> ptr;
-	LogEvent();
+	LogEvent(std::shared_ptr<Logger> logger,LogLevel::Level
+			,const char *file ,int32_t line,uint32_t elapse
+			,uint32_t thread_id,uint32_t fiber_id,uint64_t time
+			,const std::string& thread_name);
+	
+	const char *getFile() const {return m_file;}
+	int32_t getLine() const {return m_line;}
+	int32_t getElapse() const {return m_elpse;}
+	uint32_t getTreadId() const {return m_threadID;}
+	uint32_t getFiberId() const {return m_fiberdID;}
+	uint64_t getTime() const {return m_time;} 
+	const std::string & getThreadName () const {return m_threadName;}
+	std::string getContent() const {return m_ss.str();}
+	std::shared_ptr<Logger> getLogger() const {return m_logger;}
+	LogLevel::Level getLevel() const {return m_level;}
+	std::stringstream& getSS() {return m_ss;}
+	void format (const char *fmt,...);
+	void format(const char*fmt ,va_list al);
 	
 private:
 	const char* m_file = nullptr;  	//文件名
@@ -22,18 +48,26 @@ private:
 	uint32_t m_threadID = 0; 		//线程号
 	uint32_t m_fiberdID = 0;		//协程号
 	uint64_t m_time = 0;			//时间戳
-	std::string m_content;			
+	std::string m_threadName;	
+	std::stringstream m_ss;
+	std::shared_ptr<Logger> m_logger;
+	LogLevel::Level m_level;		
 };
+
 //日志级别
 class LogLevel{
 public:
 	enum Level {
-		DEBUG = 0,
-		INFO = 1,
-		WARN = 2,
-		ERROR = 3,
-		FATAL = 4,
+		UNKNOW = 0,
+		DEBUG = 1,
+		INFO = 2,
+		WARN = 3,
+		ERROR = 4,
+		FATAL = 5
 	};
+
+	static const char * ToString(LogLevel::Level);
+	static LogLevel::Level FromFtring(const std::string &str);
 };
 //日志格式器
 class LogFormatter{
@@ -41,31 +75,52 @@ public:
 	typedef std::shared_ptr<LogFormatter> ptr;
 	LogFormatter(const std::string& pattern);
 	void init();
-	std::string format(LogEvent::ptr event);
-private:
+	bool isError() const { return m_error; }
+	std::string format(std::shared_ptr<Logger> logger ,LogLevel::Level level, LogEvent::ptr event);
+	std::ostream &format(std::ostream &ofs, std::shared_ptr<Logger> logger, LogLevel::Level level, LogEvent::ptr event);
+
+public:
 	class FormatItem{
 	public:
 		typedef std::shared_ptr<FormatItem> ptr;
 		virtual ~FormatItem();
-		virtual void format(std::ostream &os,LogEvent::ptr enent) = 0;
+		virtual void format(std::ostream &os, std::shared_ptr<Logger> logger, LogLevel::Level level,  LogEvent::ptr enent) = 0;
 	};
 private:
 	std::string m_pattren;
 	std::vector<FormatItem::ptr> m_items;
+	bool m_error = false;
 };
 //日志输出地
 class LogAppender
 {
 public:
 	typedef std::shared_ptr<LogAppender> ptr;
+	typedef Spinlock MutexType;
 	LogAppender();
 	virtual ~LogAppender();
-	virtual void log(LogLevel::Level level , LogEvent::ptr event) = 0;
-	void setFomatter(LogFormatter::ptr val){ m_formatter=val; }
+	virtual void log(std::shared_ptr<Logger> logger ,LogLevel::Level level , LogEvent::ptr event) = 0;
+	virtual std::string toYamstring() = 0;
+	void setFomatter(LogFormatter::ptr val) { m_formatter = val; }
 	LogFormatter::ptr getFomatter() const { return m_formatter; }
+	LogLevel::Level getLevel () const { return m_level; }
+	void setLevel(LogLevel::Level val) { m_level = val; }
+
 protected:
-	LogLevel::Level m_level;
+	LogLevel::Level m_level = LogLevel::DEBUG;
 	LogFormatter::ptr m_formatter;
+};
+
+
+class LogEventWrap {
+public:
+	LogEventWrap(LogEvent::ptr e);
+	LogEvent::ptr gettEvent() const { return m_enent; }
+	std::stringstream &getSS();
+
+private:
+	LogEvent::ptr m_enent; 
+
 };
 
 //日志器
@@ -107,12 +162,21 @@ class FileLogAppender :public LogAppender{
 public:
 	typedef std::shared_ptr<FileLogAppender> ptr;
 	FileLogAppender(const std::string filename);
-	void log(LogLevel::Level level , LogEvent::ptr event) override;
+	void log(std::shared_ptr<Logger> logger ,LogLevel::Level level , LogEvent::ptr event) override;
 	bool reopen();
 private:
 	std::string m_filename;
 	std::ofstream m_filestream;
 
 };
+class Logger:public std::enable_shared_from_this<Logger>{
+	friend class LoggerManager;
+	public:
+		typedef std::shared_ptr<Logger> ptr;
+		typedef Spinlock MutexType;
+
+		Logger(const std::string &name = "root");
+}
+
 
 }
